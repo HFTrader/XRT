@@ -48,6 +48,7 @@ install_recipes()
         echo 'EXTERNALSRC_BUILD = "${WORKDIR}/build"' >> $XRT_BB
         echo 'EXTRA_OECMAKE:append:versal += "-DXRT_LIBDFX=true"' >> $XRT_BB
         echo 'EXTRA_OECMAKE:append:zynqmp += "-DXRT_LIBDFX=true"' >> $XRT_BB
+        echo 'DEPENDS += "rapidjson"' >> $XRT_BB
         echo 'DEPENDS:append:versal += "libdfx"' >> $XRT_BB
         echo 'DEPENDS:append:zynqmp += "libdfx"' >> $XRT_BB
         echo "FILES:\${PN} += \"\${libdir}/ps_kernels_lib\"" >> $XRT_BB
@@ -309,6 +310,9 @@ cd $ORIGINAL_DIR/$PETALINUX_NAME
 echo "CONFIG_YOCTO_MACHINE_NAME=\"${YOCTO_MACHINE}\""
 echo "CONFIG_YOCTO_MACHINE_NAME=\"${YOCTO_MACHINE}\"" >> project-spec/configs/config 
 
+#Uncomment the following 2 lines to change TMP_DIR location
+#echo "CONFIG_TMP_DIR_LOCATION=\"/scratch/${USER}/petalinux-top/$PETALINUX_VER\""
+#echo "CONFIG_TMP_DIR_LOCATION=\"/scratch/${USER}/petalinux-top/$PETALINUX_VER\"" >> project-spec/configs/config 
 
 if [ ! -z $SSTATE_CACHE ] && [ -d $SSTATE_CACHE ]; then
     echo "SSTATE-CACHE:${SSTATE_CACHE} added"

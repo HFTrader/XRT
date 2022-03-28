@@ -204,10 +204,15 @@ namespace xclhwemhal2 {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
   }
 
-  int HwEmShim::parseLog(std::ifstream &ifs)
+  int HwEmShim::parseLog()
   {
     std::vector<std::string> myvector = {"SIM-IPC's external process can be connected to instance",
-                                         "SystemC TLM functional mode"};
+                                         "SystemC TLM functional mode",
+                                         "HLS_PRINT",
+                                         "Exiting xsim",
+                                         "FATAL_ERROR"};
+
+    std::ifstream ifs(getSimPath() + "/simulate.log");
 
     if (ifs.is_open()) {
       std::string line;
@@ -215,9 +220,12 @@ namespace xclhwemhal2 {
         for (auto matchString : myvector) {
           std::string::size_type index = line.find(matchString);
           if (index != std::string::npos) {
-            logMessage(line);
-            std::iostream::pos_type savedLocation = ifs.tellg();
-            ifs.seekg(savedLocation);            
+            if(std::find(parsedMsgs.begin(), parsedMsgs.end(), line) == parsedMsgs.end()) {
+              logMessage(line);
+              parsedMsgs.push_back(line);
+              if (!matchString.compare("Exiting xsim") || !matchString.compare("FATAL_ERROR"))
+                 std::cout << "SIMULATION EXITED" << std::endl; 
+            }
           }
         }
       }
@@ -239,7 +247,6 @@ namespace xclhwemhal2 {
   {
     std::string simPath = getSimPath();
     std::string content = loadFileContentsToString(simPath + "/simulate.log");
-    parseString(simPath,"HLS_PRINT");
     if (content.find("// ERROR!!! DEADLOCK DETECTED ") != std::string::npos) {
       size_t first = content.find("// ERROR!!! DEADLOCK DETECTED");
       size_t last = content.find("detected!", first);
@@ -691,14 +698,14 @@ namespace xclhwemhal2 {
 
         if (boost::filesystem::exists(sim_path) != false) {
           waveformDebugfilePath = sim_path + "/waveform_debug_enable.txt";
-	        if (simulatorType == "xsim") {
-                cmdLineOption << " -g --wdb " << wdbFileName << ".wdb"
-                << " --protoinst " << protoFileName;
-                launcherArgs = launcherArgs + cmdLineOption.str();
-	        } else {
-                cmdLineOption << " gui ";
-                launcherArgs = launcherArgs + cmdLineOption.str();
-	        }
+          if (simulatorType == "xsim") {
+            cmdLineOption << " -g --wdb " << wdbFileName << ".wdb"
+                          << " --protoinst " << protoFileName;
+            launcherArgs = launcherArgs + cmdLineOption.str();
+          } else {
+            cmdLineOption << " gui ";
+            launcherArgs = launcherArgs + cmdLineOption.str();
+          }
         }
 
         std::string generatedWcfgFileName = sim_path + "/" + bdName + "_behav.wcfg";
@@ -1628,10 +1635,7 @@ uint32_t HwEmShim::getAddressSpace (uint32_t topology)
       mLogStream << __func__ << ", " << std::this_thread::get_id() << std::endl;
     }
 
-    std::string logPath = getSimPath() + "/" + "simulate.log";
-    std::ifstream ifs;
-    ifs.open(logPath);
-    parseLog(ifs);
+    parseLog();
 
     for (auto& it: mFdToFileNameMap) {
       int fd=it.first;
@@ -1700,6 +1704,9 @@ uint32_t HwEmShim::getAddressSpace (uint32_t topology)
     {
       std::string waitingMsg ="INFO: [HW-EMU 06-1] All the simulator processes exited successfully";
       logMessage(waitingMsg);
+
+      std::string consoleMsg = "INFO: [HW-EMU 07-0] Please refer the path \"" + getSimPath() + "/simulate.log\" for more detailed simulation infos, errors and warnings.";
+      logMessage(consoleMsg);
     }
 
     saveWaveDataBase();
@@ -1876,6 +1883,8 @@ uint32_t HwEmShim::getAddressSpace (uint32_t topology)
     free(ci_buf);
     free(ri_buf);
     free(buf);
+    parsedMsgs.clear();
+
     if (mLogStream.is_open()) {
       mLogStream << __func__ << ", " << std::this_thread::get_id() << std::endl;
       mLogStream.close();
@@ -2720,7 +2729,7 @@ int HwEmShim::xclCopyBO(unsigned int dst_boHandle, unsigned int src_boHandle, si
   }
    
   // Copy buffer thru the M2M.
-    if (deviceQuery(key_type::m2m) && getM2MAddress() != 0) {
+    if ((deviceQuery(key_type::m2m) && getM2MAddress() != 0) && !((sBO->fd >= 0) || (dBO->fd >= 0))) {
 
       char hostBuf[M2M_KERNEL_ARGS_SIZE];
       std::memset(hostBuf, 0, M2M_KERNEL_ARGS_SIZE);
@@ -3271,18 +3280,30 @@ double HwEmShim::xclGetDeviceClockFreqMHz()
   return clockSpeed;
 }
 
-// Get the maximum bandwidth for host reads from the device (in MB/sec)
-// NOTE: for now, just return 8.0 GBps (the max achievable for PCIe Gen3)
-double HwEmShim::xclGetReadMaxBandwidthMBps()
+// For PCIe gen 3x16 or 4x8:
+// Max BW = 16.0 * (128b/130b encoding) = 15.75385 GB/s
+double HwEmShim::xclGetHostReadMaxBandwidthMBps()
 {
-  return 8000.0;
+  return 15753.85;
 }
 
-// Get the maximum bandwidth for host writes to the device (in MB/sec)
-// NOTE: for now, just return 8.0 GBps (the max achievable for PCIe Gen3)
-double HwEmShim::xclGetWriteMaxBandwidthMBps()
+// For PCIe gen 3x16 or 4x8:
+// Max BW = 16.0 * (128b/130b encoding) = 15.75385 GB/s
+double HwEmShim::xclGetHostWriteMaxBandwidthMBps()
 {
-  return 8000.0;
+  return 15753.85;
+}
+
+// For DDR4: Typical Max BW = 19.25 GB/s
+double HwEmShim::xclGetKernelReadMaxBandwidthMBps()
+{
+  return 19250.00;
+}
+
+// For DDR4: Typical Max BW = 19.25 GB/s
+double HwEmShim::xclGetKernelWriteMaxBandwidthMBps()
+{
+  return 19250.00;
 }
 
 uint32_t HwEmShim::getPerfMonNumberSlots(xclPerfMonType type)

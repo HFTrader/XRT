@@ -1,7 +1,5 @@
 /**
  * Copyright (C) 2019-2022 Xilinx, Inc
- * Author(s): Min Ma	<min.ma@xilinx.com>
- *          : Larry Liu	<yliu@xilinx.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -15,6 +13,9 @@
  * License for the specific language governing permissions and limitations
  * under the License.
  */
+#ifdef __GNUC__
+# pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif
 
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -38,7 +39,7 @@ xclDeviceHandle initXRTHandle(unsigned deviceIndex)
 static void stacktrace_logger(const int sig)
 {
   const int stack_depth = STACKTRACE_DEPTH;
-  
+
   syslog(LOG_ERR, "%s - got %d\n", __func__, sig);
   if (sig == SIGCHLD)
     return;
@@ -57,17 +58,13 @@ xrt::skd* skd_inst = nullptr;
 /* Define a signal handler for the child to handle signals */
 static void sigLog(const int sig)
 {
-  if(sig == SIGTERM) {
-    if(skd_inst != nullptr) {
-      syslog(LOG_INFO,"Terminating PS kernel\n");
-      delete skd_inst;
-    }
-    exit(EXIT_SUCCESS);
-  } else {
-    syslog(LOG_ERR, "%s - got %d\n", __func__, sig);
+  if(sig != SIGTERM)
     stacktrace_logger(sig);
-    exit(EXIT_FAILURE);
+  if(skd_inst != nullptr) {
+    syslog(LOG_INFO,"Terminating PS kernel\n");
+    delete skd_inst;
   }
+  exit(EXIT_SUCCESS);
 }
 
 #define PNAME_LEN	(16)
@@ -90,7 +87,7 @@ void configSoftKernel(xclDeviceHandle handle, xclSKCmd *cmd)
       char proc_name[PNAME_LEN] = {};
       int ret;
       skd_inst = new xrt::skd(handle,cmd->meta_bohdl,cmd->bohdl,cmd->krnl_name,i,cmd->uuid);
-      
+
       /* Install Signal Handler for the Child Processes/Soft-Kernels */
       struct sigaction act;
       act.sa_handler = sigLog;
@@ -123,10 +120,12 @@ void configSoftKernel(xclDeviceHandle handle, xclSKCmd *cmd)
 	syslog(LOG_ERR, "Soft kernel initialization failed!\n");
 	goto err;
       }
+      skd_inst->report_ready();
       skd_inst->run();
 err:
       syslog(LOG_INFO, "Kernel %s was terminated\n", cmd->krnl_name);
-      delete skd_inst;
+      if(skd_inst)
+	delete skd_inst;
       exit(EXIT_SUCCESS);
     }
 
