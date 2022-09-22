@@ -199,6 +199,10 @@ zocl_sk_report_ioctl(struct drm_device *dev, void *data,
 		zocl_scu_sk_crash(scu_pdev);
 		break;
 
+	case ZOCL_SCU_STATE_FINI:
+		zocl_scu_sk_fini(scu_pdev);
+		break;
+
 	default:
 		/*
 		 * More soft kernel state will be added as the kernel
@@ -207,7 +211,7 @@ zocl_sk_report_ioctl(struct drm_device *dev, void *data,
 		return -EINVAL;
 	}
 
-	return 0;
+	return ret;
 }
 
 int
@@ -215,6 +219,7 @@ zocl_init_soft_kernel(struct drm_zocl_dev *zdev)
 {
 	struct soft_krnl *sk;
 
+	BUG_ON(!zdev);
 	sk = devm_kzalloc(zdev->ddev->dev, sizeof(*sk), GFP_KERNEL);
 	if (!sk)
 		return -ENOMEM;
@@ -233,16 +238,18 @@ zocl_fini_soft_kernel(struct drm_zocl_dev *zdev)
 	struct soft_krnl *sk;
 	int i;
 
+	BUG_ON(!zdev);
 	sk = zdev->soft_kernel;
 	mutex_lock(&sk->sk_lock);
 
-	if(!IS_ERR(&sk->sk_meta_bo))
-		ZOCL_DRM_GEM_OBJECT_PUT_UNLOCKED(&sk->sk_meta_bo->gem_base);		
+	if(!IS_ERR(&sk->sk_meta_bo)) {
+		zocl_drm_free_bo(sk->sk_meta_bo);
+	}
 	
 	for (i = 0; i < sk->sk_nimg; i++) {
 		if (IS_ERR(&sk->sk_img[i].si_bo))
 			continue;
-		ZOCL_DRM_GEM_OBJECT_PUT_UNLOCKED(&sk->sk_img[i].si_bo->gem_base);
+		zocl_drm_free_bo(sk->sk_img[i].si_bo);
 	}
 	kfree(sk->sk_img);
 

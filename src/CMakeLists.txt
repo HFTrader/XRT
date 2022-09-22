@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (C) 2018-2022 Xilinx, Inc. All rights reserved.
+# Copyright (C) 2022 Advanced Micro Devices, Inc. All rights reserved.
 cmake_minimum_required(VERSION 3.5.0)
 project(XRT)
 set(PROJECT_DESCRIPTION "https://github.com/Xilinx/XRT")
@@ -30,7 +31,7 @@ endif()
 
 if ( ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" )
   set(XRT_WARN_OPTS
-  -Wall -Werror
+  -Wall
   -Wno-mismatched-tags
   -Wno-unused-const-variable
   -Wno-unused-private-field
@@ -44,7 +45,7 @@ if ( ${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" )
   -Wno-overloaded-virtual
    )
 else()
-  set(XRT_WARN_OPTS -Wall -Werror )
+  set(XRT_WARN_OPTS -Wall)
 endif()
 
 if (DEFINED ENV{XRT_NATIVE_BUILD})
@@ -55,6 +56,10 @@ if (DEFINED ENV{XRT_CLANGTIDY_REVIEW})
   set(XRT_CLANGTIDY_REVIEW "yes")
   set(XRT_AIE_BUILD "yes")
   add_compile_options("-DXRT_ENABLE_AIE")
+endif()
+
+if (DISABLE_ABI_CHECK)
+  add_compile_options("-DDISABLE_ABI_CHECK")
 endif()
 
 if (NOT CMAKE_BUILD_TYPE)

@@ -160,9 +160,15 @@ read_data_driven_electrical(const std::vector<xq::sdm_sensor_info::data_type>& c
     auto desc = tmp.label;
     pt.put("id", desc);
     pt.put("description", desc);
-    pt.put("voltage.volts", xrt_core::utils::format_base10_shiftdown3(tmp.input));
-    pt.put("voltage.max", xrt_core::utils::format_base10_shiftdown3(tmp.max));
-    pt.put("voltage.average", xrt_core::utils::format_base10_shiftdown3(tmp.average));
+    /*
+     * Use below calculation for sensor values:
+     * actual sensor value = sensor_value * (10 ^ (unit_modifier))
+     * Example: Sensor Value 12000, Units “Volts” & Unit Modifier -3 received.
+     * So, actual sensor value => 12000 * 10 ^ (-3) = 12 Volts.
+     */
+    pt.put("voltage.volts", xrt_core::utils::format_base10_shiftdown(tmp.input, tmp.unitm, 3));
+    pt.put("voltage.max", xrt_core::utils::format_base10_shiftdown(tmp.max, tmp.unitm, 3));
+    pt.put("voltage.average", xrt_core::utils::format_base10_shiftdown(tmp.average, tmp.unitm, 3));
     // these fields are also needed to differentiate between sensor types
     pt.put("voltage.is_present", "true");
     pt.put("current.is_present", "false");
@@ -173,9 +179,9 @@ read_data_driven_electrical(const std::vector<xq::sdm_sensor_info::data_type>& c
   for (const auto& tmp : current) {
     bool found =false;
     auto desc = tmp.label;
-    auto amps = xrt_core::utils::format_base10_shiftdown3(tmp.input);
-    auto max = xrt_core::utils::format_base10_shiftdown3(tmp.max);
-    auto avg = xrt_core::utils::format_base10_shiftdown3(tmp.average);
+    auto amps = xrt_core::utils::format_base10_shiftdown(tmp.input, tmp.unitm, 3);
+    auto max = xrt_core::utils::format_base10_shiftdown(tmp.max, tmp.unitm, 3);
+    auto avg = xrt_core::utils::format_base10_shiftdown(tmp.average, tmp.unitm, 3);
 
     for (auto& kv : sensor_array) {
       auto id = kv.second.get<std::string>("id");
@@ -195,9 +201,9 @@ read_data_driven_electrical(const std::vector<xq::sdm_sensor_info::data_type>& c
 
     pt.put("id", tmp.label);
     pt.put("description", tmp.label);
-    pt.put("current.amps", xrt_core::utils::format_base10_shiftdown3(tmp.input));
-    pt.put("current.max", xrt_core::utils::format_base10_shiftdown3(tmp.max));
-    pt.put("current.average", xrt_core::utils::format_base10_shiftdown3(tmp.average));
+    pt.put("current.amps", amps);
+    pt.put("current.max", max);
+    pt.put("current.average", avg);
     // these fields are also needed to differentiate between sensor types
     pt.put("current.is_present", "true");
     pt.put("voltage.is_present", "false");
@@ -438,9 +444,12 @@ read_electrical(const xrt_core::device * device)
     if (!current.empty() || !voltage.empty() || !power.empty())
       return read_data_driven_electrical(current, voltage, power);
     else
-      is_data_driven = false;
+      return sensor_array;
   }
   catch(const xrt_core::query::no_such_key&) {
+    is_data_driven = false;
+  }
+  catch(const xrt_core::query::exception&) {
     is_data_driven = false;
   }
   catch (const std::exception& ex) {
@@ -465,10 +474,16 @@ read_thermals(const xrt_core::device * device)
   //Check if requested sensor data can be retrieved in data driven model.
   try {
     output = xrt_core::device_query<xq::sdm_sensor_info>(device, xq::sdm_sensor_info::sdr_req_type::thermal);
-    if (output.empty())
-      is_data_driven = false;
+    if (output.empty()) {
+      thermal_array.put("error_msg", "Information unavailable");
+      root.add_child("thermals", thermal_array);
+      return root;
+    }
   }
   catch(const xrt_core::query::no_such_key&) {
+    is_data_driven = false;
+  }
+  catch(const xrt_core::query::exception&) {
     is_data_driven = false;
   }
   catch (const std::exception& ex) {
@@ -494,10 +509,16 @@ read_mechanical(const xrt_core::device * device)
   //Check if requested sensor data can be retrieved in data driven model.
   try {
     output = xrt_core::device_query<xq::sdm_sensor_info>(device, xq::sdm_sensor_info::sdr_req_type::mechanical);
-    if (output.empty())
-      is_data_driven = false;
+    if (output.empty()) {
+      fan_array.put("error_msg", "Information unavailable");
+      root.add_child("fans", fan_array);
+      return root;
+    }
   }
   catch(const xrt_core::query::no_such_key&) {
+    is_data_driven = false;
+  }
+  catch(const xrt_core::query::exception&) {
     is_data_driven = false;
   }
   catch (const std::exception& ex) {

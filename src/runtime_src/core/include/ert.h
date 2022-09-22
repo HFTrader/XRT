@@ -137,12 +137,38 @@ struct ert_start_kernel_cmd {
   };
 
   /* payload */
-  union {
-    uint32_t cu_mask;          /* mandatory cu mask */
-    int32_t return_code;       /* return code from soft kernel*/
-  };
+  uint32_t cu_mask;          /* mandatory cu mask */
   uint32_t data[1];            /* count-1 number of words */
 };
+
+#ifndef U30_DEBUG
+#define ert_write_return_code(cmd, value) \
+do { \
+  struct ert_start_kernel_cmd *skcmd = (struct ert_start_kernel_cmd *)cmd; \
+  int end_idx = skcmd->count - 1 - skcmd->extra_cu_masks; \
+  skcmd->data[end_idx] = value; \
+} while (0)
+
+#define ert_read_return_code(cmd, ret) \
+do { \
+  struct ert_start_kernel_cmd *skcmd = (struct ert_start_kernel_cmd *)cmd; \
+  int end_idx = skcmd->count - 1 - skcmd->extra_cu_masks; \
+  ret = skcmd->data[end_idx]; \
+} while (0)
+#else
+/* These are for debug legacy U30 firmware */
+#define ert_write_return_code(cmd, value) \
+do { \
+  struct ert_start_kernel_cmd *skcmd = (struct ert_start_kernel_cmd *)cmd; \
+  skcmd->cu_mask = value; \
+} while (0)
+
+#define ert_read_return_code(cmd, ret) \
+do { \
+  struct ert_start_kernel_cmd *skcmd = (struct ert_start_kernel_cmd *)cmd; \
+  ret = skcmd->cu_mask; \
+} while (0)
+#endif
 
 /**
  * struct ert_init_kernel_cmd: ERT initialize kernel command format
@@ -858,7 +884,7 @@ ert_valid_opcode(struct ert_packet *pkt)
     break;
   case ERT_CLK_CALIB:
   case ERT_MB_VALIDATE:
-  case ERT_ACCESS_TEST_C:  
+  case ERT_ACCESS_TEST_C:
   case ERT_CU_STAT: /* TODO: Rules to validate? */
   case ERT_EXIT:
   case ERT_ABORT:
@@ -872,7 +898,7 @@ ert_valid_opcode(struct ert_packet *pkt)
   return valid;
 }
 
-#ifdef __GNUC__
+#ifdef __linux__
 #define P2ROUNDUP(x, align)     (-(-(x) & -(align)))
 static inline struct cu_cmd_state_timestamps *
 ert_start_kernel_timestamps(struct ert_start_kernel_cmd *pkt)

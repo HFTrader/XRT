@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018 - 2021 Xilinx, Inc
+ * Copyright (C) 2018 - 2021, 2022 Xilinx, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -17,25 +17,30 @@
 #include "SectionEmbeddedMetadata.h"
 
 #include "XclBinUtilities.h"
-namespace XUtil = XclBinUtilities;
-
+#include <boost/functional/factory.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
+namespace XUtil = XclBinUtilities;
+
 // Static Variables / Classes
-SectionEmbeddedMetadata::_init SectionEmbeddedMetadata::_initializer;
+SectionEmbeddedMetadata::init SectionEmbeddedMetadata::initializer;
 
-SectionEmbeddedMetadata::SectionEmbeddedMetadata() {
-  // Empty
-}
+SectionEmbeddedMetadata::init::init()
+{
+  auto sectionInfo = std::make_unique<SectionInfo>(EMBEDDED_METADATA, "EMBEDDED_METADATA", boost::factory<SectionEmbeddedMetadata*>());
 
-SectionEmbeddedMetadata::~SectionEmbeddedMetadata() {
-  // Empty
+  sectionInfo->supportedAddFormats.push_back(FormatType::raw);
+
+  sectionInfo->supportedDumpFormats.push_back(FormatType::raw);
+
+  addSectionType(std::move(sectionInfo));
 }
 
 void
 SectionEmbeddedMetadata::marshalToJSON(char* _pDataSection,
                                        unsigned int _sectionSize,
-                                       boost::property_tree::ptree& _ptree) const {
+                                       boost::property_tree::ptree& _ptree) const
+{
   XUtil::TRACE("");
   XUtil::TRACE("Extracting: EMBEDDED_METADATA");
   XUtil::TRACE_BUF("Section Buffer", reinterpret_cast<const char*>(_pDataSection), _sectionSize);
@@ -53,13 +58,14 @@ SectionEmbeddedMetadata::marshalToJSON(char* _pDataSection,
 
 void
 SectionEmbeddedMetadata::marshalFromJSON(const boost::property_tree::ptree& _ptSection,
-                                         std::ostringstream& _buf) const {
+                                         std::ostringstream& _buf) const
+{
 
   XUtil::TRACE("Writing XML\n");
   #if (BOOST_VERSION >= 105600)
-    boost::property_tree::xml_writer_settings<std::string> settings(' ', 2);
+  boost::property_tree::xml_writer_settings<std::string> settings(' ', 2);
   #else
-    boost::property_tree::xml_writer_settings<char> settings(' ', 2);
+  boost::property_tree::xml_writer_settings<char> settings(' ', 2);
   #endif
 
   boost::property_tree::write_xml(_buf, _ptSection, settings);

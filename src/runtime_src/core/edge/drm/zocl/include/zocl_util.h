@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 OR Apache-2.0 */
 /*
  * Copyright (C) 2016-2022 Xilinx, Inc. All rights reserved.
+ * Copyright (C) 2022 Advanced Micro Devices, Inc. All rights reserved.
  *
  * Author(s):
  *        Min Ma <min.ma@xilinx.com>
@@ -122,6 +123,15 @@ struct drm_zocl_slot {
 	struct mutex		 slot_xclbin_lock;
 };
 
+struct zocl_cu_subdev {
+	unsigned int		 cu_num;
+	unsigned int             irq[MAX_CU_NUM];
+	struct platform_device	*cu_pldev[MAX_CU_NUM];
+	struct addr_aperture	*apertures;
+	unsigned int		 num_apts;
+	struct mutex		 lock;
+};
+
 struct drm_zocl_dev {
 	struct drm_device       *ddev;
 	struct fpga_manager     *fpga_mgr;
@@ -131,8 +141,6 @@ struct drm_zocl_dev {
 	resource_size_t          host_mem_len;
 	/* Record start address, this is only for MPSoC as PCIe platform */
 	phys_addr_t		 res_start;
-	unsigned int		 cu_num;
-	unsigned int             irq[MAX_CU_NUM];
 	struct sched_exec_core  *exec;
 	/* Zocl driver memory list head */
 	struct list_head	 zm_list_head;
@@ -142,11 +150,9 @@ struct drm_zocl_dev {
 
 	struct list_head	 ctx_list;
 
-	struct addr_aperture	*apertures;
-	unsigned int		 num_apts;
-
+	struct zocl_cu_subdev	 cu_subdev;
+	struct platform_device	*cu_intc;
 	struct kds_sched	 kds;
-	struct platform_device	*cu_pldev[MAX_CU_NUM];
 
 	/*
 	 * This RW lock is to protect the sysfs nodes exported

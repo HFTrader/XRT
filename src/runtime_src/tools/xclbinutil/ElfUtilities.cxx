@@ -18,11 +18,13 @@
 
 #include "XclBinUtilities.h"
 
+#include <algorithm>
 #include <boost/algorithm/string.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/format.hpp>
 #include <boost/version.hpp>
+#include <cstdlib>
 
 #if (BOOST_VERSION >= 106400)
   #include <boost/process/search_path.hpp>
@@ -30,6 +32,44 @@
 
 
 namespace XUtil = XclBinUtilities;
+
+static
+auto findExecutablePath(const std::string& executable)
+{
+  boost::filesystem::path executablePath;
+
+#if 0                       // Only enabled for the Vitis version of xclbinutil
+  // -- Check to see if XILINX_VITIS has been set
+  const auto xilinxVitisEnv = std::getenv("XILINX_VITIS");
+
+  if (xilinxVitisEnv != nullptr) {
+    executablePath = xilinxVitisEnv;
+    executablePath = executablePath / "aietools" / "tps" / "lnx64" / "gcc" / "bin" / executable;
+    XUtil::TRACE("Step 1: Looking for executable at: '" + executablePath.string() + "'");
+    if (!boost::filesystem::exists(executablePath)) {
+      executablePath = "";           // Executable doesn't exist
+      XUtil::TRACE("Not found");
+    }
+  }
+#endif
+
+#if (BOOST_VERSION >= 106400)
+  // -- Check the path
+  if (executablePath.string().empty()) {
+    XUtil::TRACE("Step 2: Looking for executable path");
+    executablePath = boost::process::search_path(executable);
+    if (!boost::filesystem::exists(executablePath))
+      XUtil::TRACE("Not found");
+
+  }
+#endif
+
+  // -- Default path /usr/bin
+  if (executablePath.string().empty())
+    executablePath = boost::filesystem::path("/usr") / "bin" / executable;
+
+  return executablePath;
+}
 
 static std::vector<std::string>
 dataMineExportedFunctionsObjdump(const std::string& elfLibrary)
@@ -48,18 +88,7 @@ dataMineExportedFunctionsObjdump(const std::string& elfLibrary)
 {
 
   // Call objdump to get the collection of functions
-  boost::filesystem::path objdumpPath = "/usr/bin/objdump";    // Assume it is in a known location
-
-#if (BOOST_VERSION >= 106400)
-  objdumpPath = boost::process::search_path("objdump");
-
-  const std::string expectedObjdumpPath = "/usr/bin/objdump";
-
-  if (objdumpPath.string() != expectedObjdumpPath)
-    std::cout << boost::format("Warning: Unexpected objdump path.\n"
-                               "         Expected: %s\n"
-                               "           Actual: %s\n") % expectedObjdumpPath % objdumpPath.string();
-#endif
+  const auto objdumpPath = findExecutablePath("objdump");
 
   const std::vector<std::string> cmdOptions = { "--wide", "--section=.text", "-T", "-C", elfLibrary };
   std::ostringstream os_stdout;
@@ -129,8 +158,8 @@ isTag(const std::string& entry)
   return true;
 }
 
-static unsigned long 
-readHexString(const std::string& entry, 
+static unsigned long
+readHexString(const std::string& entry,
               const size_t startPos)
 {
   size_t endIndex = entry.find_first_not_of("abcdefABCDEF0123456789", startPos);
@@ -162,8 +191,8 @@ enum class DW_TAG {
 
 
 // Collection of TAGs that is used to convert between human readable and enumeration value
-static const std::vector<std::pair<enum DW_TAG, std::string>> 
-DWTags = {
+static const std::vector<std::pair<DW_TAG, std::string>>
+    DWTags = {
   { DW_TAG::unknown, "DW_TAG_unknown" },
   { DW_TAG::subprogram, "DW_TAG_subprogram" },
   { DW_TAG::pointer_type, "DW_TAG_pointer_type" },
@@ -176,7 +205,7 @@ DWTags = {
   { DW_TAG::structure_type, "DW_TAG_structure_type" },
 };
 
-static enum DW_TAG 
+static DW_TAG
 get_DW_TAG(const std::string& tagString)
 {
   for (const auto& entry : DWTags)
@@ -186,8 +215,8 @@ get_DW_TAG(const std::string& tagString)
   return DW_TAG::unknown;
 }
 
-static const std::string &
-enum_DW_TAG_to_string(enum DW_TAG eTag)
+static const std::string&
+enum_DW_TAG_to_string(DW_TAG eTag)
 {
   for (const auto& entry : DWTags)
     if (entry.first == eTag)
@@ -197,8 +226,12 @@ enum_DW_TAG_to_string(enum DW_TAG eTag)
 }
 
 static std::string
-get_DW_AT_value(const std::string& entry, const std::string& tag)
+get_DW_AT_value(const std::string& entry,
+                const std::string& tag,
+                bool findFirst = false)
 //    <434>   DW_AT_name        : (indirect string, offset: 0xa7): nullptr_t
+//    <c8d>   DW_AT_name        : (strp) (offset: 0x3e4): kernel0_fini
+//    <e71>   DW_AT_type        : (ref4) <0xdec>, __shared_ptr_access<pscontext::impl, (__gnu_cxx::_Lock_policy)2, false, false>
 {
   // If the tag is not found return an empty string
   if (entry.find(tag) == std::string::npos)
@@ -206,7 +239,8 @@ get_DW_AT_value(const std::string& entry, const std::string& tag)
 
   // Get the last value after the colon
   const std::string searchString = ":";
-  size_t valueIndex = entry.find_last_of(searchString);
+
+  size_t valueIndex = findFirst ? entry.find(searchString) : entry.find_last_of(searchString);
   if (valueIndex == std::string::npos)
     throw std::runtime_error("ERROR: Cannot find DW_AT value in the entry: '" + entry + "'");
 
@@ -217,19 +251,85 @@ get_DW_AT_value(const std::string& entry, const std::string& tag)
   return returnValue;
 }
 
-static void 
-if_exist_add_DW_AT(const std::string& entry,
-                   const std::string& tag,
-                   boost::property_tree::ptree& pt)
+static void
+if_exist_add_DW_AT_byte_size(const std::string& entry,
+                             boost::property_tree::ptree& pt)
+//    <6f9>   DW_AT_byte_size   : 8
+//    <d51>   DW_AT_byte_size   : (data1) 8
 {
+  const auto tag = "DW_AT_byte_size";
   const auto& tagValue = get_DW_AT_value(entry, tag);
   if (tagValue.empty())
     return;
 
-  pt.put(tag, tagValue);
+  // Find the byte size value
+  auto byteSizeValue  = tagValue;
+  size_t valueIndex = tagValue.find_last_of(" ");
+  if (valueIndex != std::string::npos)
+    byteSizeValue = tagValue.substr(valueIndex);
+
+  boost::algorithm::trim(byteSizeValue);
+  pt.put(tag, byteSizeValue);
 }
 
-static unsigned long 
+static void
+if_exist_add_DW_AT_type(const std::string& entry,
+                        boost::property_tree::ptree& pt)
+//    <cbf>   DW_AT_type        : <0xc73>
+//    <d52>   DW_AT_type        : (ref4) <0x55f>, float
+{
+  const auto tag = "DW_AT_type";
+  const auto& tagValue = get_DW_AT_value(entry, tag, true);
+  if (tagValue.empty())
+    return;
+
+  // Find the byte size value
+  size_t startIndex = tagValue.find("<");
+  size_t endIndex = tagValue.find(">");
+  size_t copyLength = (1 + endIndex) - startIndex;  // Include the end index character
+
+  auto typeValue = tagValue.substr(startIndex, copyLength);
+  boost::algorithm::trim(typeValue);
+
+  pt.put(tag, typeValue);
+}
+
+static void
+remove_helper_comment(std::string& tagValue)
+{
+  size_t startIndex = tagValue.find("(");
+  size_t endIndex = tagValue.find(")");
+  if ((startIndex != std::string::npos) && (endIndex != std::string::npos)) {
+    size_t eraseLength = (sizeof(")") + endIndex) - startIndex;
+    tagValue.erase(startIndex, eraseLength);
+  }
+}
+
+static void
+if_exist_add_DW_AT_name(const std::string& entry,
+                        boost::property_tree::ptree& pt)
+//    <cc4>   DW_AT_name        : (indirect string, offset: 0x5ee): kernel0
+//    <cc4>   DW_AT_name        : (strp) (offset: 0x5ee): kernel0
+{
+  const auto tag = "DW_AT_name";
+  const auto& tagValue = get_DW_AT_value(entry, tag);
+  if (tagValue.empty())
+    return;
+
+  // Get the last value after the colon
+  const std::string searchString = ":";
+  size_t valueIndex = entry.find_last_of(searchString);
+  auto nameValue = entry.substr(valueIndex + searchString.size());
+
+  // Post clean-up
+  remove_helper_comment(nameValue);
+  boost::algorithm::trim(nameValue);
+
+  pt.put(tag, nameValue);
+}
+
+
+static unsigned long
 get_tag_offset(const std::string& entry)
 // <1><c79>: Abbrev Number: 62 (DW_TAG_class_type)
 {
@@ -243,13 +343,17 @@ get_tag_offset(const std::string& entry)
 }
 
 
-static void 
+static void
 add_DWTAG_pointerType(size_t& index,
                       const std::vector<std::string>& dwarfEntries,
                       AbbrevCollection& argTags)
 // <1><6f8>: Abbrev Number: 37 (DW_TAG_pointer_type)
 //    <6f9>   DW_AT_byte_size   : 8
 //    <6fa>   DW_AT_type        : <0x6db>
+
+// <1><d50>: Abbrev Number: 37 (DW_TAG_pointer_type)
+//    <d51>   DW_AT_byte_size   : (data1) 8
+//    <d52>   DW_AT_type        : (ref4) <0x55f>, float
 {
   const auto offset = get_tag_offset(dwarfEntries[index]);
 
@@ -260,13 +364,13 @@ add_DWTAG_pointerType(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_byte_size", ptDWTAG);
-    if_exist_add_DW_AT(entry, "DW_AT_type", ptDWTAG);
+    if_exist_add_DW_AT_byte_size(entry, ptDWTAG);
+    if_exist_add_DW_AT_type(entry, ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_referenceType(size_t& index,
                         const std::vector<std::string>& dwarfEntries,
                         AbbrevCollection& argTags)
@@ -283,13 +387,13 @@ add_DWTAG_referenceType(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_byte_size", ptDWTAG);
-    if_exist_add_DW_AT(entry, "DW_AT_type", ptDWTAG);
+    if_exist_add_DW_AT_byte_size(entry, ptDWTAG);
+    if_exist_add_DW_AT_type(entry, ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_typedef(size_t& index,
                   const std::vector<std::string>& dwarfEntries,
                   AbbrevCollection& argTags)
@@ -308,13 +412,13 @@ add_DWTAG_typedef(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_name", ptDWTAG);
-    if_exist_add_DW_AT(entry, "DW_AT_type", ptDWTAG);
+    if_exist_add_DW_AT_name(entry, ptDWTAG);
+    if_exist_add_DW_AT_type(entry, ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_base_type(size_t& index,
                     const std::vector<std::string>& dwarfEntries,
                     AbbrevCollection& argTags)
@@ -332,13 +436,14 @@ add_DWTAG_base_type(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_name", ptDWTAG);
-    if_exist_add_DW_AT(entry, "DW_AT_byte_size", ptDWTAG);
+    if_exist_add_DW_AT_name(entry, ptDWTAG);
+    if_exist_add_DW_AT_byte_size(entry, ptDWTAG);
   }
+
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_class_type(size_t& index,
                      const std::vector<std::string>& dwarfEntries,
                      AbbrevCollection& argTags)
@@ -357,12 +462,12 @@ add_DWTAG_class_type(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_name", ptDWTAG);
+    if_exist_add_DW_AT_name(entry, ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_const_type(size_t& index,
                      const std::vector<std::string>& dwarfEntries,
                      AbbrevCollection& argTags)
@@ -380,12 +485,12 @@ add_DWTAG_const_type(size_t& index,
   // Examine the DWTAG entries up either the end of the list or the next DWTAG
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
-    if_exist_add_DW_AT(dwarfEntries[index], "DW_AT_type", ptDWTAG);
+    if_exist_add_DW_AT_type(dwarfEntries[index], ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
-static void 
+static void
 add_DWTAG_structure_type(size_t& index,
                          const std::vector<std::string>& dwarfEntries,
                          AbbrevCollection& argTags)
@@ -406,26 +511,36 @@ add_DWTAG_structure_type(size_t& index,
   while ((++index < dwarfEntries.size()) &&
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
-    if_exist_add_DW_AT(entry, "DW_AT_name", ptDWTAG);
+    if_exist_add_DW_AT_name(entry, ptDWTAG);
   }
   argTags.emplace_back(offset, ptDWTAG);
 }
 
 
 static const boost::property_tree::ptree&
-get_dw_type(const std::string& typeOffset, 
+get_dw_type(const std::string& typeOffset,
             const AbbrevCollection& argTags)
 // <0xcc3>
+// (ref4) <0xcbd>, xrtHandles
 {
-  size_t posOffset = typeOffset.find("<0x") == std::string::npos ? 0 : 3;
-  unsigned long offset = readHexString(typeOffset, posOffset);
+  // -- Get the hex string
+  size_t startIndex = typeOffset.find("<");
+  size_t endIndex = typeOffset.find(">");
+  size_t copyLength = (1 + endIndex) - startIndex;  // Include the end index character
+
+  auto offsetValue = typeOffset.substr(startIndex, copyLength);
+  boost::algorithm::trim(offsetValue);
+
+  // -- Parse the hex string
+  size_t posOffset = offsetValue.find("<0x") == std::string::npos ? 0 : 3;
+  unsigned long offset = readHexString(offsetValue, posOffset);
 
   auto it = std::find_if(argTags.begin(), argTags.end(),
                          [&offset](const std::pair<unsigned long, boost::property_tree::ptree>& element) {return element.first == offset;});
 
   const static boost::property_tree::ptree ptEmpty;
   if (it == argTags.end()) {
-    XUtil::TRACE("Argument tag not found for: '" + typeOffset + "'");
+    XUtil::TRACE("Argument tag offset '" + offsetValue + "' not found for: '" + typeOffset + "'");
     return ptEmpty;
   }
 
@@ -440,7 +555,7 @@ evaluate_DW_TAG_type(const std::string& typeOffset,
 {
   // If there is no offset, do nothing.
   if (typeOffset.empty()) {
-    ptArgument.put("type","void");
+    ptArgument.put("type", "void");
     return;
   }
 
@@ -448,14 +563,14 @@ evaluate_DW_TAG_type(const std::string& typeOffset,
   if (ptTag.empty())
     throw std::runtime_error("ERROR: No cache value found for: '" + typeOffset + "'");
 
-  enum DW_TAG dwTag = get_DW_TAG(ptTag.get<std::string>("DW_TAG"));
+  DW_TAG dwTag = get_DW_TAG(ptTag.get<std::string>("DW_TAG"));
 
   switch (dwTag) {
     case DW_TAG::pointer_type: {
-        evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type",""), argTags, ptArgument);
+        evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type", ""), argTags, ptArgument);
         ptArgument.put("primitive-byte-size", ptTag.get<std::string>("DW_AT_byte_size"));
         // Add pointer
-        std::string argType = ptArgument.get<std::string>("type", "") + "*";
+        auto argType = ptArgument.get<std::string>("type", "") + "*";
         ptArgument.put<std::string>("type", argType);
         ptArgument.put("address-qualifier", "GLOBAL");
         break;
@@ -465,7 +580,7 @@ evaluate_DW_TAG_type(const std::string& typeOffset,
       break;
 
     case DW_TAG::_typedef:
-      evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type",""), argTags, ptArgument);
+      evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type", ""), argTags, ptArgument);
       ptArgument.put("type", ptTag.get<std::string>("DW_AT_name"));
       break;
 
@@ -475,17 +590,17 @@ evaluate_DW_TAG_type(const std::string& typeOffset,
       break;
 
     case DW_TAG::const_type: {
-        evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type",""), argTags, ptArgument);
+        evaluate_DW_TAG_type(ptTag.get<std::string>("DW_AT_type", ""), argTags, ptArgument);
         // Add const
-        std::string argType = "const " + ptArgument.get<std::string>("type", "");
+        auto argType = "const " + ptArgument.get<std::string>("type", "");
         ptArgument.put<std::string>("type", argType);
         break;
       }
 
-    case DW_TAG::structure_type: 
+    case DW_TAG::structure_type:
       ptArgument.put("type", ptTag.get<std::string>("DW_AT_name"));
       break;
-      
+
     default:
       throw std::runtime_error("ERROR: DW enum not supported: " + enum_DW_TAG_to_string(dwTag));
       break;
@@ -502,8 +617,12 @@ add_formal_parameter(size_t& index,
          (!isTag(dwarfEntries[index]))) {
     const auto& entry = dwarfEntries[index];
 
-    if (entry.find("DW_AT_name") != std::string::npos)
-      ptArgument.put("name", get_DW_AT_value(entry, "DW_AT_name"));
+    if (entry.find("DW_AT_name") != std::string::npos) {
+      auto nameValue = get_DW_AT_value(entry, "DW_AT_name");
+      remove_helper_comment(nameValue);
+      boost::algorithm::trim(nameValue);
+      ptArgument.put("name", nameValue);
+    }
 
     if (entry.find("DW_AT_type") != std::string::npos)
       evaluate_DW_TAG_type(get_DW_AT_value(entry, "DW_AT_type"), argTags, ptArgument);
@@ -552,6 +671,24 @@ add_DWTAG_subprogram(size_t& index,
 //    <cb9>   DW_AT_decl_line   : 26
 //    <cba>   DW_AT_type        : <0xcc3>
 //    <cbe>   DW_AT_location    : 0x0 (location list)
+
+// <1><cc3>: Abbrev Number: 64 (DW_TAG_subprogram)
+//    <cc4>   DW_AT_external    : (flag_present) 1
+//    <cc4>   DW_AT_name        : (strp) (offset: 0x5ee): kernel0
+//    <cc8>   DW_AT_decl_file   : (data1) 1
+//    <cc9>   DW_AT_decl_line   : (data1) 20
+//    <cca>   DW_AT_type        : (ref4) <0x592>, int
+//    <cce>   DW_AT_low_pc      : (addr) 0x788
+//    <cd6>   DW_AT_high_pc     : (data8) 0x8
+//    <cde>   DW_AT_frame_base  : (exprloc) 1 byte block: 9c 	(DW_OP_call_frame_cfa)
+//    <ce0>   DW_AT_GNU_all_call_sites: (flag_present) 1
+//    <ce0>   DW_AT_sibling     : (ref4) <0xd50>
+// <2><ce4>: Abbrev Number: 66 (DW_TAG_formal_parameter)
+//    <ce5>   DW_AT_name        : (string) inA
+//    <ce9>   DW_AT_decl_file   : (data1) 1
+//    <cea>   DW_AT_decl_line   : (data1) 20
+//    <ceb>   DW_AT_type        : (ref4) <0xd50>, float
+
 {
   // -- Get function metadata
   boost::property_tree::ptree ptFunction;
@@ -596,13 +733,13 @@ add_DWTAG_subprogram(size_t& index,
     // Examine this argument
     boost::property_tree::ptree ptArg;
     add_formal_parameter(index, dwarfEntries, argTags, ptArg);
-    ptArgsArray.push_back(std::make_pair("", ptArg));
+    ptArgsArray.push_back({ "", ptArg });
   }
 
   if (!ptArgsArray.empty()) {
-      // If the function type is a kernel, the last argument should not have an ID
-      if (functionType == "kernel")
-        ptArgsArray.back().second.put("use-id", 0);
+    // If the function type is a kernel, the last argument should not have an ID
+    if (functionType == "kernel")
+      ptArgsArray.back().second.put("use-id", 0);
 
     ptFunction.add_child("args", ptArgsArray);
   }
@@ -610,7 +747,7 @@ add_DWTAG_subprogram(size_t& index,
   ptFunction.put("signature", create_function_signature(ptArgsArray));
 
   // The the kernel to the collection
-  ptFunctionArray.push_back(std::make_pair("", ptFunction));
+  ptFunctionArray.push_back({ "", ptFunction });
 }
 
 static void
@@ -702,18 +839,7 @@ dataMineExportedFunctionsReadElf(const std::string& elfLibrary,
                                  std::vector<std::string>& dwarfEntries)
 {
   // Call readelf to get the collection of functions
-  boost::filesystem::path readElfPath = "/usr/bin/readelf";    // Assume it is in a known location
-
-#if (BOOST_VERSION >= 106400)
-  readElfPath = boost::process::search_path("readelf");
-
-  const std::string expectedReadElfPath = "/usr/bin/readelf";
-
-  if (readElfPath.string() != expectedReadElfPath)
-    std::cout << boost::format("Warning: Unexpected readelf path.\n"
-                               "         Expected: %s\n"
-                               "           Actual: %s\n") % expectedReadElfPath % readElfPath.string();
-#endif
+  const auto readElfPath = findExecutablePath("readelf");
 
   const std::vector<std::string> cmdOptions = { "--wide", "-wi", elfLibrary };
   std::ostringstream os_stdout;
@@ -737,12 +863,24 @@ drcCheckExportedFunctions(const std::vector<std::string> exportedFunctions)
 {
   // Examine the exported functions.  If any have a signature, this indicates that
   // C++ mangling is enabled.
-  for (auto entry :exportedFunctions) {
+  XUtil::TRACE("DRC: Looking for mangled function names");
+  std::vector<std::string> mangledFunctions;
+  for (const auto & entry : exportedFunctions) {
     // A signature starts with a '('.  For example:  kernel0_fini(xrtHandles*)
-    if (entry.find("(") != std::string::npos) {
-      std::string errMsg = boost::str(boost::format("ERROR: C++ mangled functions are not supported, please export the function.  Offending function: '%s'"));
-      throw std::runtime_error(errMsg);
-    }
+    if (entry.find("(") != std::string::npos)
+      mangledFunctions.push_back(entry);
+  }
+
+  // Report all of the mangled functions
+  if (!mangledFunctions.empty()) {
+    std::sort(mangledFunctions.begin(), mangledFunctions.end());
+              
+    auto errMsg = boost::str(boost::format("ERROR: C++ mangled functions are not supported, please export the function. \nOffending function(s):\n"));
+
+    for (const auto& entry : mangledFunctions) 
+      errMsg += boost::str(boost::format("     %s\n") % entry);
+
+    throw std::runtime_error(errMsg);
   }
 }
 

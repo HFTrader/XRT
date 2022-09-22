@@ -1,5 +1,5 @@
 /**
- *  Copyright (C) 2017 Xilinx, Inc. All rights reserved.
+ *  Copyright (C) 2017-2022 Xilinx, Inc. All rights reserved.
  *
  *  Utility Functions for sysmon, axi firewall and other peripherals.
  *  Author: Umang Parekh
@@ -371,6 +371,8 @@ long xclmgmt_hot_reset(struct xclmgmt_dev *lro, bool force)
 		return -EIO;
 	}
 
+	(void) xocl_hwmon_sdm_get_sensors_list(lro, true);
+
 	/* Workaround for some DSAs. Flush axilite busses */
 	if (dev_info->flags & XOCL_DSAFLAG_AXILITE_FLUSH)
 		platform_axilite_flush(lro);
@@ -700,6 +702,12 @@ int xclmgmt_program_shell(struct xclmgmt_dev *lro)
 	int ret;
 	char *blob = NULL;
 	int len;
+
+	if (!lro->ready) {
+		mgmt_warn(lro, "not ready yet");
+		ret = -EINVAL;
+		goto failed;
+	}
 
 	if (!lro->core.fdt_blob && xocl_get_timestamp(lro) == 0)
 		xclmgmt_load_fdt(lro);

@@ -4,6 +4,7 @@
  * OpenCL accelerators.
  *
  * Copyright (C) 2016-2022 Xilinx, Inc. All rights reserved.
+ * Copyright (C) 2022 Advanced Micro Devices, Inc. All rights reserved.
  *
  * Authors:
  *    Sonal Santan <sonal.santan@xilinx.com>
@@ -34,6 +35,7 @@
 #include "sched_exec.h"
 #include "zocl_xclbin.h"
 #include "zocl_error.h"
+#include "zocl_ert_intc.h"
 
 #define ZOCL_DRIVER_NAME        "zocl"
 #define ZOCL_DRIVER_DESC        "Zynq BO manager"
@@ -167,6 +169,7 @@ static int zocl_pr_slot_init(struct drm_zocl_dev *zdev,
 			 zocl_slot->pr_isolation_addr);
 
 		zocl_slot->partial_overlay_id = -1;
+		zocl_slot->slot_idx = i;
 
 		zdev->pr_slot[i] = zocl_slot;
 	}
@@ -190,7 +193,7 @@ static void zocl_pr_slot_fini(struct drm_zocl_dev *zdev)
 	for (i = 0; i < zdev->num_pr_slot; i++) {
 		zocl_slot = zdev->pr_slot[i];
 		if (zocl_slot) {
-			zocl_free_sections(zocl_slot);
+			zocl_free_sections(zdev, zocl_slot);
 			mutex_destroy(&zocl_slot->slot_xclbin_lock);
 			zocl_xclbin_fini(zdev, zocl_slot);
 			kfree(zocl_slot);
@@ -211,19 +214,20 @@ static int zocl_aperture_init(struct drm_zocl_dev *zdev)
 	struct addr_aperture *apts = NULL;
 	int i = 0;
 
-	zdev->apertures = kcalloc(MAX_APT_NUM, sizeof(struct addr_aperture),
-				 GFP_KERNEL);
-	if (!zdev->apertures) {
+	zdev->cu_subdev.apertures = kcalloc(MAX_APT_NUM,
+				sizeof(struct addr_aperture), GFP_KERNEL);
+	if (!zdev->cu_subdev.apertures) {
 		DRM_ERROR("Out of memory for Aperture\n");
 		return -ENOMEM;
 	}
 
-	apts = zdev->apertures;
+	apts = zdev->cu_subdev.apertures;
 	/* Consider this magic number as uninitialized aperture identity */
 	for (i = 0; i < MAX_APT_NUM; ++i)
 		apts[i].addr = EMPTY_APT_VALUE;
 
-	zdev->num_apts = 0;
+	zdev->cu_subdev.num_apts = 0;
+	mutex_init(&zdev->cu_subdev.lock);
 
 	return 0;
 }
@@ -237,10 +241,12 @@ static int zocl_aperture_init(struct drm_zocl_dev *zdev)
 static void zocl_aperture_fini(struct drm_zocl_dev *zdev)
 {
 	/* Free aperture memory */
-	if (zdev->apertures)
-		vfree(zdev->apertures);
+	if (zdev->cu_subdev.apertures)
+		kfree(zdev->cu_subdev.apertures);
 
-	zdev->apertures = NULL;
+	zdev->cu_subdev.apertures = NULL;
+	zdev->cu_subdev.num_apts = 0;
+	mutex_destroy(&zdev->cu_subdev.lock);
 }
 
 
@@ -300,13 +306,11 @@ struct platform_device *zocl_find_pdev(char *name)
  */
 void update_cu_idx_in_apt(struct drm_zocl_dev *zdev, int apt_idx, int cu_idx)
 {
-	struct addr_aperture *apts = zdev->apertures;
+	struct addr_aperture *apts = zdev->cu_subdev.apertures;
 
-	/* Actually, we should consider lock this.
-	 * So far, let do this without lock. Since the scheduler would only
-	 * update this when xclbin was changed.
-	 */
+	mutex_lock(&zdev->cu_subdev.lock);
 	apts[apt_idx].cu_idx = cu_idx;
+	mutex_unlock(&zdev->cu_subdev.lock);
 }
 
 /**
@@ -321,15 +325,17 @@ void update_cu_idx_in_apt(struct drm_zocl_dev *zdev, int apt_idx, int cu_idx)
  */
 int get_apt_index_by_addr(struct drm_zocl_dev *zdev, phys_addr_t addr)
 {
-	struct addr_aperture *apts = zdev->apertures;
+	struct addr_aperture *apts = zdev->cu_subdev.apertures;
 	int i;
 
+	mutex_lock(&zdev->cu_subdev.lock);
 	/* Haven't consider search efficiency yet. */
-	for (i = 0; i < zdev->num_apts; ++i)
+	for (i = 0; i < zdev->cu_subdev.num_apts; ++i)
 		if (apts[i].addr == addr)
 			break;
+	mutex_unlock(&zdev->cu_subdev.lock);
 
-	return (i == zdev->num_apts) ? -EINVAL : i;
+	return (i == zdev->cu_subdev.num_apts) ? -EINVAL : i;
 }
 
 /**
@@ -344,19 +350,21 @@ int get_apt_index_by_addr(struct drm_zocl_dev *zdev, phys_addr_t addr)
  */
 int get_apt_index_by_cu_idx(struct drm_zocl_dev *zdev, int cu_idx)
 {
-	struct addr_aperture *apts = zdev->apertures;
+	struct addr_aperture *apts = zdev->cu_subdev.apertures;
 	int i;
 
 	WARN_ON(cu_idx >= MAX_CU_NUM);
 	if (cu_idx >= MAX_CU_NUM)
 		return -EINVAL;
 
+	mutex_lock(&zdev->cu_subdev.lock);
 	/* Haven't consider search efficiency yet. */
-	for (i = 0; i < zdev->num_apts; ++i)
+	for (i = 0; i < zdev->cu_subdev.num_apts; ++i)
 		if (apts[i].cu_idx == cu_idx)
 			break;
+	mutex_unlock(&zdev->cu_subdev.lock);
 
-	return (i == zdev->num_apts) ? -EINVAL : i;
+	return (i == zdev->cu_subdev.num_apts) ? -EINVAL : i;
 }
 
 /**
@@ -368,7 +376,8 @@ int get_apt_index_by_cu_idx(struct drm_zocl_dev *zdev, int cu_idx)
  *
  * @return	0 on success, Error code on failure.
  */
-int subdev_create_cu(struct device *dev, struct xrt_cu_info *info, struct platform_device **pdevp)
+int subdev_create_cu(struct device *dev, struct xrt_cu_info *info,
+		     struct platform_device **pdevp)
 {
 	struct platform_device *pldev;
 	struct resource res = {};
@@ -426,6 +435,7 @@ int subdev_create_cu(struct device *dev, struct xrt_cu_info *info, struct platfo
 		DRM_ERROR("Failed to probe device\n");
 		goto err1;
 	}
+
 	*pdevp = pldev;
 
 	return 0;
@@ -446,16 +456,18 @@ void subdev_destroy_cu(struct drm_zocl_dev *zdev)
 {
 	int i;
 
+	mutex_lock(&zdev->cu_subdev.lock);
 	for (i = 0; i < MAX_CU_NUM; ++i) {
-		if (!zdev->cu_pldev[i])
+		if (!zdev->cu_subdev.cu_pldev[i])
 			continue;
 
 		/* Remove the platform-level device */
-		platform_device_del(zdev->cu_pldev[i]);
+		platform_device_del(zdev->cu_subdev.cu_pldev[i]);
 		/* Destroy the platform device */
-		platform_device_put(zdev->cu_pldev[i]);
-		zdev->cu_pldev[i] = NULL;
+		platform_device_put(zdev->cu_subdev.cu_pldev[i]);
+		zdev->cu_subdev.cu_pldev[i] = NULL;
 	}
+	mutex_unlock(&zdev->cu_subdev.lock);
 }
 
 /**
@@ -467,7 +479,8 @@ void subdev_destroy_cu(struct drm_zocl_dev *zdev)
  *
  * @return	0 on success, Error code on failure.
  */
-int subdev_create_scu(struct device *dev, struct xrt_cu_info *info, struct platform_device **pdevp)
+int subdev_create_scu(struct device *dev, struct xrt_cu_info *info,
+		      struct platform_device **pdevp)
 {
 	struct platform_device *pldev;
 	int ret;
@@ -703,7 +716,7 @@ static int zocl_mmap(struct file *filp, struct vm_area_struct *vma)
 	struct drm_file     *priv = filp->private_data;
 	struct drm_device   *dev = priv->minor->dev;
 	struct drm_zocl_dev *zdev = dev->dev_private;
-	struct addr_aperture *apts = zdev->apertures;
+	struct addr_aperture *apts = zdev->cu_subdev.apertures;
 	struct drm_zocl_bo  *bo = NULL;
 	unsigned long        vsize;
 	phys_addr_t          phy_addr;
@@ -743,7 +756,7 @@ static int zocl_mmap(struct file *filp, struct vm_area_struct *vma)
 	 * Could not map from the middle of an aperture.
 	 */
 	apt_idx = vma->vm_pgoff;
-	if (apt_idx < 0 || apt_idx >= zdev->num_apts) {
+	if (apt_idx < 0 || apt_idx >= zdev->cu_subdev.num_apts) {
 		DRM_ERROR("The offset is not in the apertures list\n");
 		return -EINVAL;
 	}
@@ -751,7 +764,7 @@ static int zocl_mmap(struct file *filp, struct vm_area_struct *vma)
 	vma->vm_pgoff = phy_addr >> PAGE_SHIFT;
 
 	vsize = vma->vm_end - vma->vm_start;
-	if (vsize > zdev->apertures[apt_idx].size)
+	if (vsize > zdev->cu_subdev.apertures[apt_idx].size)
 		return -EINVAL;
 
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
@@ -933,6 +946,8 @@ static const struct drm_ioctl_desc zocl_ioctls[] = {
 			DRM_AUTH|DRM_UNLOCKED|DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(ZOCL_AIE_FREQSCALE, zocl_aie_freqscale_ioctl,
 			DRM_AUTH|DRM_UNLOCKED|DRM_RENDER_ALLOW),
+	DRM_IOCTL_DEF_DRV(ZOCL_SET_CU_READONLY_RANGE, zocl_set_cu_read_only_range_ioctl,
+			DRM_AUTH|DRM_UNLOCKED|DRM_RENDER_ALLOW),
 };
 
 static const struct file_operations zocl_driver_fops = {
@@ -1053,9 +1068,16 @@ static int zocl_drm_platform_probe(struct platform_device *pdev)
 		if (irq < 0)
 			break;
 		DRM_DEBUG("CU(%d) IRQ %d\n", index, irq);
-		zdev->irq[index] = irq;
+		zdev->cu_subdev.irq[index] = irq;
 	}
-	zdev->cu_num = index;
+	zdev->cu_subdev.cu_num = index;
+	if (zdev->cu_subdev.cu_num) {
+		ret = zocl_ert_create_intc(&pdev->dev, zdev->cu_subdev.irq,
+					   zdev->cu_subdev.cu_num, 0,
+					   ERT_CU_INTC_DEV_NAME, &zdev->cu_intc);
+		if (ret)
+			DRM_ERROR("Failed to create cu intc device, ret %d\n", ret);
+	}
 
 	/* set to 0xFFFFFFFF(32bit) or 0xFFFFFFFFFFFFFFFF(64bit) */
 	zdev->host_mem = (phys_addr_t) -1;
@@ -1076,6 +1098,21 @@ static int zocl_drm_platform_probe(struct platform_device *pdev)
 	mutex_init(&zdev->mm_lock);
 	INIT_LIST_HEAD(&zdev->zm_list_head);
 
+#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
+	/* Platform did not initialize dma_mask, try to set 64-bit DMA
+	 * first */
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret) {
+		/* If setting 64-bit DMA mask
+		 * fails, fall back to 32-bit
+		 * DMA mask */
+		ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+		if (ret) {
+			DRM_ERROR("DMA configuration failed: 0x%x\n", ret);
+			return ret;
+		}
+	}
+#endif
 	subdev = zocl_find_pdev("ert_hw");
 	if (subdev) {
 		DRM_INFO("ert_hw found: 0x%llx\n", (uint64_t)(uintptr_t)subdev);
@@ -1237,6 +1274,7 @@ static int zocl_drm_platform_remove(struct platform_device *pdev)
 	if (zdev->fpga_mgr)
 		fpga_mgr_put(zdev->fpga_mgr);
 
+	zocl_ert_destroy_intc(zdev->cu_intc);
 	zocl_clear_mem(zdev);
 	mutex_destroy(&zdev->mm_lock);
 	zocl_pr_slot_fini(zdev);
@@ -1247,8 +1285,7 @@ static int zocl_drm_platform_remove(struct platform_device *pdev)
 
 	zocl_fini_sched(zdev);
 
-	if (zdev->apertures)
-		kfree(zdev->apertures);
+	zocl_aperture_fini(zdev);
 
 	drm_dev_unregister(drm);
 	ZOCL_DRM_DEV_PUT(drm);
@@ -1270,10 +1307,10 @@ static struct platform_driver *drivers[] = {
 	&zocl_ospi_versal_driver,
 	&cu_driver,
 	&scu_driver,
-	&zocl_drm_private_driver,
 	&zocl_csr_intc_driver,
-	&zocl_xgq_intc_driver,
+	&zocl_irq_intc_driver,
 	&zocl_cu_xgq_driver,
+	&zocl_drm_private_driver,
 	&zocl_ctrl_ert_driver,
 	&zocl_rpu_channel_driver,
 };

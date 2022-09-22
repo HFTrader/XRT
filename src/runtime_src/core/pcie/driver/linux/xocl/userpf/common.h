@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2020 Xilinx, Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Xilinx, Inc. All rights reserved.
  *
  * Authors:
  * 		Lizhi Hou <lizhi.hou@xilinx.com>
@@ -17,7 +17,6 @@
 #define	_USERPF_COMMON_H
 
 #include "../xocl_drv.h"
-#include "../lib/libqdma/libqdma_export.h"
 #include "xocl_bo.h"
 #include "../xocl_drm.h"
 #include "xocl_ioctl.h"
@@ -170,6 +169,8 @@ int xocl_alloc_cma_ioctl(struct drm_device *dev, void *data,
 	struct drm_file *filp);
 int xocl_free_cma_ioctl(struct drm_device *dev, void *data,
 	struct drm_file *filp);
+int xocl_set_cu_read_only_range_ioctl(struct drm_device *dev, void *data,
+	struct drm_file *filp);
 
 /* sysfs functions */
 int xocl_init_sysfs(struct xocl_dev *xdev);
@@ -235,6 +236,8 @@ void xocl_kds_cus_disable(struct xocl_dev *xdev);
 int xocl_kds_register_cus(struct xocl_dev *xdev, int slot_hd, xuid_t *uuid,
 			  struct ip_layout *ip_layout,
 			  struct ps_kernel_node *ps_kernel);
-void xocl_kds_unregister_cus(struct xocl_dev *xdev, int slot_hd);
+int xocl_kds_unregister_cus(struct xocl_dev *xdev, int slot_hd);
+int xocl_kds_set_cu_read_range(struct xocl_dev *xdev, u32 cu_idx,
+			       u32 start, u32 size);
 
 #endif

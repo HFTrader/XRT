@@ -467,8 +467,8 @@ scheduler_update_stat(const xrt_core::device *device)
   try {
     // lock xclbin
     std::string xclbin_uuid = xrt_core::device_query<xq::xclbin_uuid>(dev);
-    // dont open a context if xclbin_uuid is empty
-    if(xclbin_uuid.empty())
+    // dont open a context if xclbin_uuid is empty or is all zeros
+    if (xclbin_uuid.empty() || !xrt::uuid(xclbin_uuid))
       return;
     auto uuid = xrt::uuid(xclbin_uuid);
     dev->open_context(uuid.get(), std::numeric_limits<unsigned int>::max(), true);
@@ -564,6 +564,8 @@ populate_cus(const xrt_core::device *device)
     } 
     else { // scu_name e.g. kernel_vcu_encoder_2
       scu_name = ps_kernels.at(psk_inst).pkd_sym_name;
+      scu_name.append(":");
+      scu_name.append(ps_kernels.at(psk_inst).pkd_sym_name);
       scu_name.append("_");
       scu_name.append(std::to_string(num_scu));
     }

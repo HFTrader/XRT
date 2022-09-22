@@ -64,7 +64,7 @@ zocl_info_cu_ioctl(struct drm_device *ddev, void *data, struct drm_file *filp)
 {
 	struct drm_zocl_info_cu *args = data;
 	struct drm_zocl_dev *zdev = ddev->dev_private;
-	struct addr_aperture *apts = zdev->apertures;
+	struct addr_aperture *apts = zdev->cu_subdev.apertures;
 	int apt_idx = args->apt_idx;
 	int cu_idx = args->cu_idx;
 	phys_addr_t addr = args->paddr;
@@ -136,4 +136,16 @@ zocl_aie_freqscale_ioctl(struct drm_device *dev, void *data, struct drm_file *fi
 	struct drm_zocl_dev *zdev = ZOCL_GET_ZDEV(dev);
 
 	return zocl_aie_freqscale(zdev, data);
+}
+
+int
+zocl_set_cu_read_only_range_ioctl(struct drm_device *dev, void *data,
+				  struct drm_file *filp)
+{
+	struct drm_zocl_dev *zdev = ZOCL_GET_ZDEV(dev);
+	struct drm_zocl_set_cu_range *info = data;
+	int ret = 0;
+
+	ret = zocl_kds_set_cu_read_range(zdev, info->cu_index, info->start, info->size);
+	return ret;
 }

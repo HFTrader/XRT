@@ -95,7 +95,7 @@ ReportBOStats::getPropertyTree20202( const xrt_core::device * pDevice,
     } else {
       std::string mem_used(bo_info[1]);
       mem_used.pop_back();
-      auto mem_used_bytes = XBUtilities::string_to_bytes(mem_used);
+      auto mem_used_bytes = XBUtilities::string_to_base_units(mem_used, XBUtilities::unit::bytes);
       mem_used.pop_back();
       bo_pt.put("buffer_type", bo_info[0].substr(1, bo_info[0].length()-2));
       bo_pt.put("buffer_count", bo_info[2].substr(0, bo_info[2].length()-3));
@@ -117,9 +117,9 @@ ReportBOStats::writeReport(const xrt_core::device* /*pDevice*/,
 {
   boost::property_tree::ptree empty_ptree;
 
-  Table2D::HeaderData bo_type = {"Buffer Type", Table2D::Justification::left};
-  Table2D::HeaderData bo_count = {"Buffer Count", Table2D::Justification::right};
-  Table2D::HeaderData mem_used = {"Memory Usage (B)", Table2D::Justification::right};
+  Table2D::HeaderData bo_type = {"Buffer Type", Table2D::Justification::right};
+  Table2D::HeaderData bo_count = {"Buffer Count", Table2D::Justification::left};
+  Table2D::HeaderData mem_used = {"Memory Usage (B)", Table2D::Justification::left};
   std::vector<Table2D::HeaderData> table_headers = {bo_type, bo_count, mem_used};
   Table2D bo_table(table_headers);
 

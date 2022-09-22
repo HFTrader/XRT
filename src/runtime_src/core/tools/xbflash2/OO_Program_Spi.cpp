@@ -49,16 +49,16 @@ spiCommand(po::variables_map& vm) {
 
     //optional command line args
     std::string sBar = vm.count("bar") ? vm["bar"].as<std::string>() : "";
-    int bar = !sBar.empty() ? std::stoi(sBar) : 0;
+    int bar = !sBar.empty() ? std::stoi(sBar, nullptr, 0) : 0;
     std::string sBarOffset = vm.count("bar-offset") ? vm["bar-offset"].as<std::string>() : "";
-    size_t baroff = !sBarOffset.empty() ? std::stoul(sBarOffset) : INVALID_OFFSET;
+    size_t baroff = !sBarOffset.empty() ? std::stoul(sBarOffset, nullptr, 0) : INVALID_OFFSET;
     bool force = vm.count("force") ? true : false;
     bool dualflash = vm.count("dual-flash") ? true : false;    
 
     if (vm.count("revert-to-golden")) { //spi - reset/revert-to-golden
         std::cout << "About to revert to golden image for device " << bdf << std::endl;
         if (!force && !XBU::can_proceed())
-            return;
+            throw std::errc::operation_canceled;
 
         pcidev::pci_device dev(bdf, bar, baroff);
         XSPI_Flasher xspi(&dev, dualflash);
@@ -75,7 +75,7 @@ spiCommand(po::variables_map& vm) {
 
         std::cout << "Preparing to program flash on device: " << bdf << std::endl;
         if (!force && !XBU::can_proceed())
-            return;
+            throw std::errc::operation_canceled;
 
         pcidev::pci_device dev(bdf, bar, baroff);
         XSPI_Flasher xspi(&dev, dualflash);

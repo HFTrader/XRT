@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2016-2021 Xilinx, Inc. All rights reserved.
+# Copyright (C) 2016-2022 Xilinx, Inc. All rights reserved.
 #
 # Authors:
 #
@@ -16,7 +16,8 @@
 obj-m	+= xocl.o
 ccflags-y := -Iinclude/drm
 
-include $(PWD)/../lib/Makefile.in
+export module_path ?= $(PWD)
+include $(module_path)/../lib/Makefile.in
 
 # Base on Linux Documentation/kbuild/modules.txt.
 # $(src) provides the absolute path by pointing to the directory
@@ -44,7 +45,6 @@ drv_common-y   := $(common_dir)/kds_core.o \
 		  $(common_dir)/xrt_cu.o \
 		  $(common_dir)/cu_hls.o \
 		  $(common_dir)/fast_adapter.o \
-		  $(common_dir)/cu_plram.o \
 		  $(common_dir)/xgq_execbuf.o \
 		  $(common_dir)/xrt_xclbin.o
 
@@ -58,7 +58,6 @@ xocl-y := \
 	../xocl_xgq.o \
 	../subdev/xdma.o \
 	../subdev/qdma.o \
-	../subdev/qdma4.o \
 	../subdev/feature_rom.o \
 	../subdev/mailbox.o \
 	../subdev/xvc.o \
@@ -127,6 +126,9 @@ endif
 ifeq ($(SYMBOL),1)
 ccflags-y += -g
 endif
+
+QDMA_PATH := $(src)/../lib/libqdma/QDMA/linux-kernel/driver/libqdma/
+ccflags-y += -I$(QDMA_PATH) -I$(QDMA_PATH)/qdma_access/ -I$(QDMA_PATH)/qdma_access/qdma_soft_access/ -I$(QDMA_PATH)/qdma_access/eqdma_soft_access -I$(QDMA_PATH)/qdma_access/qdma_cpm4_access/ -I$(QDMA_PATH)/qdma_access/eqdma_cpm5_access/
 
 all:
 	@echo $(PWD)

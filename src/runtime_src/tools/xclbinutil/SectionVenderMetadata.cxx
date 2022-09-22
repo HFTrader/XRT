@@ -17,11 +17,12 @@
 #include "SectionVenderMetadata.h"
 
 #include "XclBinUtilities.h"
-namespace XUtil = XclBinUtilities;
-
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
+#include <boost/functional/factory.hpp>
 #include <boost/property_tree/json_parser.hpp>
+
+namespace XUtil = XclBinUtilities;
 
 // Disable windows compiler warnings
 #ifdef _WIN32
@@ -29,30 +30,25 @@ namespace XUtil = XclBinUtilities;
 #endif
 
 // Static Variables / Classes
-SectionVenderMetadata::_init SectionVenderMetadata::_initializer;
+SectionVenderMetadata::init SectionVenderMetadata::initializer;
 
-// -------------------------------------------------------------------------
-
-SectionVenderMetadata::SectionVenderMetadata()
+SectionVenderMetadata::init::init()
 {
-  // Empty
-}
+  auto sectionInfo = std::make_unique<SectionInfo>(VENDER_METADATA, "VENDER_METADATA", boost::factory<SectionVenderMetadata*>());
+  sectionInfo->supportsSubSections = true;
 
-// -------------------------------------------------------------------------
+  // There is only one-subsection that is supported.  By default it is not named.
+  sectionInfo->subSections.push_back("");
 
-SectionVenderMetadata::~SectionVenderMetadata()
-{
-  // Empty
-}
+  sectionInfo->supportsIndexing = true;
 
-// -------------------------------------------------------------------------
-
-bool
-SectionVenderMetadata::doesSupportAddFormatType(FormatType _eFormatType) const
-{
-  // The Vender Metadata top-level section does support any add syntax.
+  // Add format support empty (no support)
+  // The top-level section doesn't support any add syntax.
   // Must use sub-sections
-  return false;
+
+  sectionInfo->supportedAddFormats.push_back(FormatType::raw);
+
+  addSectionType(std::move(sectionInfo));
 }
 
 // -------------------------------------------------------------------------
@@ -66,14 +62,6 @@ SectionVenderMetadata::subSectionExists(const std::string& _sSubSectionName) con
 
 // -------------------------------------------------------------------------
 
-bool
-SectionVenderMetadata::supportsSubSection(const std::string& _sSubSectionName) const
-{
-  // There is only one-subsection that is supported.  By default it is not named.
-  return _sSubSectionName.empty();
-}
-
-
 // -------------------------------------------------------------------------
 void
 SectionVenderMetadata::copyBufferUpdateMetadata(const char* _pOrigDataSection,
@@ -86,7 +74,7 @@ SectionVenderMetadata::copyBufferUpdateMetadata(const char* _pOrigDataSection,
   // Do we have enough room to overlay the header structure
   if (_origSectionSize < sizeof(vender_metadata)) {
     auto errMsg = boost::format("ERROR: Segment size (%d) is smaller than the size of the vender_metadata structure (%d)")
-                                % _origSectionSize % sizeof(vender_metadata);
+        % _origSectionSize % sizeof(vender_metadata);
     throw std::runtime_error(boost::str(errMsg));
   }
 
@@ -132,12 +120,12 @@ SectionVenderMetadata::copyBufferUpdateMetadata(const char* _pOrigDataSection,
   // Update and record the variables
   // mpo_name
   {
-    std::string sDefault = reinterpret_cast<const char*>(pHdr) + sizeof(vender_metadata) + pHdr->mpo_name;
-    std::string sValue = ptSK.get<std::string>("mpo_name", sDefault);
+    auto sDefault = reinterpret_cast<const char*>(pHdr) + sizeof(vender_metadata) + pHdr->mpo_name;
+    auto sValue = ptSK.get<std::string>("mpo_name", sDefault);
 
     if (sValue.compare(getSectionIndexName()) != 0) {
       auto errMsg = boost::format("ERROR: Metadata data mpo_name '%s' does not match expected section name '%s'")
-                                  % sValue % getSectionIndexName();
+          % sValue % getSectionIndexName();
       throw std::runtime_error(boost::str(errMsg));
     }
 
@@ -173,7 +161,7 @@ SectionVenderMetadata::createDefaultImage(std::istream& _istream, std::ostringst
 {
   XUtil::TRACE("VENDER_METADATA IMAGE");
 
-  vender_metadata venderMetadataHdr = vender_metadata{0};
+  vender_metadata venderMetadataHdr = vender_metadata{};
   std::ostringstream stringBlock;       // String block (stored immediately after the header)
 
   // Initialize default values
@@ -216,13 +204,13 @@ SectionVenderMetadata::readSubPayload(const char* _pOrigDataSection,
                                       unsigned int _origSectionSize,
                                       std::istream& _istream,
                                       const std::string& _sSubSectionName,
-                                      enum Section::FormatType _eFormatType,
+                                      Section::FormatType _eFormatType,
                                       std::ostringstream& _buffer) const
 {
   // Only default (e.g. empty) sub sections are supported
   if (!_sSubSectionName.empty()) {
     auto errMsg = boost::format("ERROR: Subsection '%s' not support by section '%s")
-                                % _sSubSectionName % getSectionKindAsString();
+        % _sSubSectionName % getSectionKindAsString();
     throw std::runtime_error(boost::str(errMsg));
   }
 
@@ -232,7 +220,7 @@ SectionVenderMetadata::readSubPayload(const char* _pOrigDataSection,
     throw std::runtime_error(errMsg);
   }
 
-  if (_eFormatType != Section::FT_RAW) {
+  if (_eFormatType != Section::FormatType::raw) {
     std::string errMsg = "ERROR: Vendor Metadata only supports the RAW format.";
     throw std::runtime_error(errMsg);
   }
@@ -250,14 +238,14 @@ SectionVenderMetadata::writeObjImage(std::ostream& _oStream) const
   // Overlay the structure
   // Do we have enough room to overlay the header structure
   if (m_bufferSize < sizeof(vender_metadata)) {
-    auto errMsg = boost::format("ERROR: Segment size (%d) is smaller than the size of the bmc structure (%d)") % m_bufferSize % sizeof(vender_metadata);
+    auto errMsg = boost::format("ERROR: Segment size (%d) is smaller than the size of the vendor metadata structure (%d)") % m_bufferSize % sizeof(vender_metadata);
     throw std::runtime_error(boost::str(errMsg));
   }
 
-  // No look at the data
-  vender_metadata* pHdr = reinterpret_cast<vender_metadata*>(m_pBuffer);
+  // Now look at the data
+  auto pHdr = reinterpret_cast<vender_metadata*>(m_pBuffer);
 
-  const char* pFWBuffer = reinterpret_cast<const char*>(pHdr) + pHdr->m_image_offset;
+  auto pFWBuffer = reinterpret_cast<const char*>(pHdr) + pHdr->m_image_offset;
   _oStream.write(pFWBuffer, pHdr->m_image_size);
 }
 
@@ -266,18 +254,16 @@ SectionVenderMetadata::writeObjImage(std::ostream& _oStream) const
 void
 SectionVenderMetadata::writeMetadata(std::ostream& _oStream) const
 {
-  XUtil::TRACE("VENDER_METADATA -METADATA");
-
+  XUtil::TRACE("VENDER_METADATA writeMetadata");
   // Overlay the structure
   // Do we have enough room to overlay the header structure
   if (m_bufferSize < sizeof(vender_metadata)) {
     auto errMsg = boost::format("ERROR: Segment size (%d) is smaller than the size of the vender_metadata structure (%d)")
-                                % m_bufferSize % sizeof(vender_metadata);
+        % m_bufferSize % sizeof(vender_metadata);
     throw std::runtime_error(boost::str(errMsg));
   }
 
-  vender_metadata* pHdr = reinterpret_cast<vender_metadata*>(m_pBuffer);
-
+  auto pHdr = reinterpret_cast<vender_metadata*>(m_pBuffer);
   XUtil::TRACE(boost::str(boost::format(
                               "Original: \n"
                               "  mpo_name (0x%lx): '%s'\n"
@@ -311,12 +297,12 @@ SectionVenderMetadata::writeSubPayload(const std::string& _sSubSectionName,
 
   if (!_sSubSectionName.empty()) {
     auto errMsg = boost::format("ERROR: Subsection '%s' not support by section '%s")
-                                % _sSubSectionName % getSectionKindAsString();
+        % _sSubSectionName % getSectionKindAsString();
     throw std::runtime_error(boost::str(errMsg));
   }
 
   // Some basic DRC checks
-  if (_eFormatType != Section::FT_RAW) {
+  if (_eFormatType != Section::FormatType::raw) {
     std::string errMsg = "ERROR: Vendor Metadata section only supports the RAW format.";
     throw std::runtime_error(errMsg);
   }
@@ -325,7 +311,7 @@ SectionVenderMetadata::writeSubPayload(const std::string& _sSubSectionName,
 }
 
 void
-SectionVenderMetadata::readXclBinBinary(std::fstream& _istream, const axlf_section_header& _sectionHeader)
+SectionVenderMetadata::readXclBinBinary(std::istream& _istream, const axlf_section_header& _sectionHeader)
 {
   Section::readXclBinBinary(_istream, _sectionHeader);
 
@@ -349,7 +335,7 @@ SectionVenderMetadata::readXclBinBinary(std::fstream& _istream, const axlf_secti
     throw std::runtime_error("ERROR: copyBufferUpdateMetadata could not find the vender_metadata section.");
 
   XUtil::TRACE_PrintTree("Current VENDER_METADATA contents", pt);
-  std::string sName = ptVenderMetadata.get<std::string>("mpo_name");
+  auto sName = ptVenderMetadata.get<std::string>("mpo_name");
 
   Section::m_sIndexName = sName;
 }

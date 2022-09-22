@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018, 2020-2021 Xilinx, Inc
+ * Copyright (C) 2018, 2020-2022 Xilinx, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -21,6 +21,7 @@
 #include "xclbin.h"
 
 #include <boost/filesystem.hpp>
+#include <boost/format.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <fstream>
 #include <iostream>
@@ -36,21 +37,11 @@ class XclBin;
 
 // Custom exception with payloads
 typedef enum {
-  XET_RUNTIME = 1,           // Generic Runtime error (1)
-  XET_MISSING_SECTION = 100, // Section is missing
+  xet_runtime = 1,           // Generic Runtime error (1)
+  xet_missing_section = 100, // Section is missing
 } XclBinExceptionType;
 
 namespace XclBinUtilities {
-
-template<typename ... Args>
-
-std::string format(const std::string& format, Args ... args) {
-  size_t size = 1 + snprintf(nullptr, 0, format.c_str(), args ...);
-  std::unique_ptr<char[]> buf(new char[size]);
-  snprintf(buf.get(), size, format.c_str(), args ...);
-
-  return std::string(buf.get(), buf.get() + size);
-}
 
 template <typename T>
 std::vector<T> as_vector(boost::property_tree::ptree const& pt, 
@@ -66,6 +57,20 @@ std::vector<T> as_vector(boost::property_tree::ptree const& pt,
       }
     }
     return r;
+}
+
+// This template will eventually replace "as_vector"
+// The issue is that the code needs to be refactored to use this new template
+template <typename T>
+std::vector<T> as_vector_simple(const boost::property_tree::ptree& pt, 
+                                const boost::property_tree::ptree::key_type& key)
+{
+  static const boost::property_tree::ptree ptEmpty;
+  std::vector<T> r;
+
+  for (auto& item : pt.get_child(key, ptEmpty))
+      r.push_back(item.second.get_value<T>());
+  return r;
 }
 
 
@@ -98,7 +103,7 @@ public:
     }
 
     // Use are version of what() and not runtime_error's
-    virtual const char* what() const noexcept {
+    const char* what() const noexcept override{
       return m_msg.c_str();
     }
 
@@ -141,7 +146,9 @@ void setQuiet(bool _bQuiet);
 bool isQuiet();
 
 void QUIET(const std::string& _msg);
+void QUIET(const boost::format & fmt);
 void TRACE(const std::string& _msg, bool _endl = true);
+void TRACE(const boost::format & fmt, bool _endl = true);
 void TRACE_PrintTree(const std::string& _msg, const boost::property_tree::ptree& _pt);
 void TRACE_BUF(const std::string& _msg, const char* _pData, uint64_t _size);
 

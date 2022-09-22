@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2018, 2020-2021 Xilinx, Inc
+ * Copyright (C) 2018, 2020-2022 Xilinx, Inc
  *
  * Licensed under the Apache License, Version 2.0 (the "License"). You may
  * not use this file except in compliance with the License. A copy of the
@@ -19,7 +19,6 @@
 #include "Section.h"                           // TODO: REMOVE SECTION INCLUDE
 #include "XclBinClass.h"
 
-#include <iostream>
 #include <boost/algorithm/string/join.hpp>
 #include <boost/format.hpp>
 #include <boost/property_tree/json_parser.hpp>
@@ -29,6 +28,7 @@
 #include <fstream>
 #include <inttypes.h>
 #include <iomanip>
+#include <iostream>
 #include <memory>
 #include <vector>
 
@@ -39,12 +39,11 @@
 #pragma warning (disable : 4244) // Addresses Boost conversion Windows build warnings
 #endif  
 
+#include <boost/asio/io_service.hpp>
 #include <boost/process.hpp>
 #include <boost/process/child.hpp>
 #include <boost/process/env.hpp>
-#include <boost/asio/io_service.hpp>
 #endif
-
 
 
 #ifdef _WIN32
@@ -86,6 +85,10 @@ void XclBinUtilities::QUIET(const std::string &_msg) {
   }
 }
 
+void XclBinUtilities::QUIET(const boost::format& fmt) {
+  QUIET(boost::str(fmt));
+}
+
 
 void
 XclBinUtilities::TRACE(const std::string& _msg, bool _endl) {
@@ -96,6 +99,11 @@ XclBinUtilities::TRACE(const std::string& _msg, bool _endl) {
 
   if (_endl)
     std::cout << std::endl << std::flush;
+}
+
+void 
+XclBinUtilities::TRACE(const boost::format &fmt, bool endl) {
+  TRACE(boost::str(fmt), endl);
 }
 
 
@@ -312,7 +320,7 @@ XclBinUtilities::hexStringToBinaryBuffer(const std::string& _inputString,
 
   if (_inputString.length() != _bufferSize * 2) {
     std::string errMsg = "Error: hexStringToBinaryBuffer - Input string is not the same size as the given buffer";
-    XUtil::TRACE(XUtil::format("InputString: %d (%s), BufferSize: %d", _inputString.length(), _inputString.c_str(), _bufferSize));
+    XUtil::TRACE(boost::format("InputString: %d (%s), BufferSize: %d") %  _inputString.length() % _inputString % _bufferSize);
     throw std::runtime_error(errMsg);
   }
 
@@ -326,57 +334,22 @@ XclBinUtilities::hexStringToBinaryBuffer(const std::string& _inputString,
   }
 }
 
-#ifdef _WIN32
 uint64_t
 XclBinUtilities::stringToUInt64(const std::string& _sInteger, bool _bForceHex) {
-  uint64_t value = 0;
-
   // Is it a hex value
-  if ( _bForceHex || 
-       ((_sInteger.length() > 2) &&
-        (_sInteger[0] == '0') && (_sInteger[1] == 'x'))) {
-    if (1 == sscanf_s(_sInteger.c_str(), "%" PRIx64 "", &value)) {
-      return value;
-    }
-  } else {
-    if (1 == sscanf_s(_sInteger.c_str(), "%" PRId64 "", &value)) {
-      return value;
-    }
+  if (_bForceHex) {
+    return std::stoul(_sInteger, nullptr, 16);
   }
 
-  std::string errMsg = "ERROR: Invalid integer string in JSON file: '" + _sInteger + "'";
-  throw std::runtime_error(errMsg);
+  return std::stoul(_sInteger, nullptr, 0); // Allow standard library to determine the base
 }
-#else
-uint64_t
-XclBinUtilities::stringToUInt64(const std::string& _sInteger, bool _bForceHex) {
-  uint64_t value = 0;
-
-  // Is it a hex value
-  if (_bForceHex || 
-      ((_sInteger.length() > 2) &&
-       (_sInteger[0] == '0') && (_sInteger[1] == 'x'))) {
-    if (1 == sscanf(_sInteger.c_str(), "%" PRIx64 "", &value)) {
-      return value;
-    }
-  } else {
-    if (1 == sscanf(_sInteger.c_str(), "%" PRId64 "", &value)) {
-      return value;
-    }
-  }
-
-  std::string errMsg = "ERROR: Invalid integer string in JSON file: '" + _sInteger + "'";
-  throw std::runtime_error(errMsg);
-}
-#endif
 
 void
 XclBinUtilities::printKinds() {
-  std::vector< std::string > kinds;
-  Section::getKinds(kinds);
+  auto supportedKinds = Section::getSupportedKinds();
   std::cout << "All supported section names supported by this tool:\n";
-  for (auto & kind : kinds) {
-    std::cout << "  " << kind << "\n";
+  for (auto & entry : supportedKinds) {
+    std::cout << "  " << entry << "\n";
   }
 }
 
@@ -447,7 +420,7 @@ XclBinUtilities::getSignature(std::fstream& _istream, std::string& _sSignature,
   }
 
   // We have a signature read it in
-  XUtil::SignatureHeader signature = {0};
+  XUtil::SignatureHeader signature = {};
 
   _istream.seekg(signatureOffset);
   _istream.read((char*)&signature, sizeof(XUtil::SignatureHeader));
@@ -548,7 +521,7 @@ XclBinUtilities::removeSignature(const std::string& _sInputFile, const std::stri
 void
 createSignatureBufferImage(std::ostringstream& _buf, const std::string & _sSignature, const std::string & _sSignedBy)
 {
-  XUtil::SignatureHeader signature = {0};
+  XUtil::SignatureHeader signature = {};
   std::string magicValue = getSignatureMagicValue();
 
   // Initialize the structure
@@ -650,9 +623,9 @@ static void addConnection( std::vector<boost::property_tree::ptree> & groupConne
                            unsigned int argIndex, unsigned int ipLayoutIndex, unsigned int memIndex)
 {
   boost::property_tree::ptree ptConnection;
-  ptConnection.put("arg_index", XUtil::format("%d", argIndex).c_str());
-  ptConnection.put("m_ip_layout_index", XUtil::format("%d", ipLayoutIndex).c_str());
-  ptConnection.put("mem_data_index", XUtil::format("%d", memIndex).c_str());
+  ptConnection.put("arg_index", (boost::format("%d") % argIndex).str());
+  ptConnection.put("m_ip_layout_index", (boost::format("%d") % ipLayoutIndex).str());
+  ptConnection.put("mem_data_index", (boost::format("%d") % memIndex).str());
 
   groupConnectivity.push_back(ptConnection);
 }
@@ -781,9 +754,9 @@ createMemoryBankGroupEntries( std::vector<WorkingConnection> & workingConnection
     {
       const boost::optional<std::string> sSizeBytes = ptGroupMemory.get_optional<std::string>("m_size");
       if (sSizeBytes.is_initialized()) 
-        ptGroupMemory.put("m_size", XUtil::format("0x%lx", groupSize).c_str());
+        ptGroupMemory.put("m_size", (boost::format("0x%lx") % groupSize).str());
       else 
-        ptGroupMemory.put("m_sizeKB", XUtil::format("0x%lx", groupSize / 1024).c_str());
+        ptGroupMemory.put("m_sizeKB", (boost::format("0x%lx") % (groupSize / 1024)).str());
 
       // Add a tag value to indicate that this entry was the result of grouping memories
       std::vector<int> memIndexVector;
@@ -867,18 +840,18 @@ validateMemoryBankGroupEntries( const unsigned int startGroupMemIndex,
         // Do we have a duplicate entry
         const unsigned int searchMemIndex = groupConnectivity[searchIndex].get<unsigned int>("mem_data_index");
         if (searchMemIndex == memIndex) {
-          std::string errMsg = XUtil::format("ERROR: Connection indexes at %d and %d in the GROUP_CONNECTIVITY section are duplicates of each other.", index, searchIndex);
-          throw std::runtime_error(errMsg);
+          auto errMsg = boost::format("ERROR: Connection indexes at %d and %d in the GROUP_CONNECTIVITY section are duplicates of each other.") % index % searchIndex;
+          throw std::runtime_error(errMsg.str());
         }
 
         // Memory connectivity is not continuous (when using grouped memories)
-        std::string errMsg = XUtil::format("ERROR: Invalid memory grouping (not continuous).\n"
-                                           "       Connection:\n"
-                                           "           arg_index       : %d\n"
-                                           "           ip_layout_index : %d\n"
-                                           "           mem_data_index  : %d (group)\n"
-                                           "       is also connected to mem_data_index %d.\n", argIndex, ipLayoutIndex, memIndex, searchMemIndex);
-        throw std::runtime_error(errMsg);
+        auto errMsg = boost::format("ERROR: Invalid memory grouping (not continuous).\n"
+                                    "       Connection:\n"
+                                    "           arg_index       : %d\n"
+                                    "           ip_layout_index : %d\n"
+                                    "           mem_data_index  : %d (group)\n"
+                                    "       is also connected to mem_data_index %d.\n") % argIndex % ipLayoutIndex % memIndex % searchMemIndex;
+        throw std::runtime_error(errMsg.str());
       }
     }
   }
@@ -903,7 +876,7 @@ transformMemoryBankGroupingCollections(const std::vector<boost::property_tree::p
 
     // Determine if the connection is a valid grouping connection
     // Algorithm: Look at the memory type and if the memory is used
-    std::string memType = groupTopology[memIndex].get<std::string>("m_type");
+    auto memType = groupTopology[memIndex].get<std::string>("m_type");
     if (memType.compare("MEM_DRAM") == 0)
         memType = "MEM_HBM";
 
@@ -976,8 +949,8 @@ XclBinUtilities::createMemoryBankGrouping(XclBin & xclbin)
       for (unsigned int index = 0; index < connectivity.size(); ++index) {
         const unsigned int memIndex = connectivity[index].get<unsigned int>("mem_data_index");
         if (memIndex >= groupTopology.size()) {
-          std::string errMsg = XUtil::format("ERROR: Connectivity section 'mem_data_index' (%d) at index %d exceeds the number of 'mem_topology' elements (%d).  This is usually an indication of corruption in the xclbin archive.", memIndex, index, groupTopology.size());
-          throw std::runtime_error(errMsg);
+          auto errMsg = boost::format("ERROR: Connectivity section 'mem_data_index' (%d) at index %d exceeds the number of 'mem_topology' elements (%d).  This is usually an indication of corruption in the xclbin archive.") % memIndex % index % groupTopology.size();
+          throw std::runtime_error(errMsg.str());
         }
       }
 
@@ -996,7 +969,7 @@ XclBinUtilities::createMemoryBankGrouping(XclBin & xclbin)
       {
         boost::property_tree::ptree ptConnection;
         for (const auto & connection : groupConnectivity) 
-          ptConnection.push_back(std::make_pair("", connection));
+          ptConnection.push_back({"", connection});
     
         boost::property_tree::ptree ptGroupConnection;
         ptGroupConnection.add_child("m_connection", ptConnection);
@@ -1017,7 +990,7 @@ XclBinUtilities::createMemoryBankGrouping(XclBin & xclbin)
   {
     boost::property_tree::ptree ptMemData;
     for (const auto & mem_data : groupTopology) 
-      ptMemData.push_back(std::make_pair("", mem_data));
+      ptMemData.push_back({"", mem_data});
 
     boost::property_tree::ptree ptGroupTopology;
     ptGroupTopology.add_child("m_mem_data", ptMemData);
@@ -1032,7 +1005,6 @@ XclBinUtilities::createMemoryBankGrouping(XclBin & xclbin)
     xclbin.addSection(pGroupTopologySection);
   }
 }
-
 
 
 #if (BOOST_VERSION >= 106400)
@@ -1066,16 +1038,16 @@ XclBinUtilities::exec(const boost::filesystem::path &cmd,
   int exitCode = runningProcess.exit_code();
 
   if (exitCode != 0) {
-    const std::string errMsg = boost::str(boost::format("Error: Shell command exited with a non-zero value (%d)\n"
-                                                        "     Cmd: %s %s\n"
-                                                        "  StdOut: %s\n"
-                                                        "  StdErr: %s\n")
-                                          % exitCode 
-                                          % cmd.string() % boost::algorithm::join(args, " ")
-                                          % os_stdout.str()
-                                          % os_stderr.str());
+    auto errMsg = boost::format("Error: Shell command exited with a non-zero value (%d)\n"
+                                "     Cmd: %s %s\n"
+                                "  StdOut: %s\n"
+                                "  StdErr: %s\n")
+                                % exitCode 
+                                % cmd.string() % boost::algorithm::join(args, " ")
+                                % os_stdout.str()
+                                % os_stderr.str();
     if (bThrow) 
-      throw std::runtime_error(errMsg);
+      throw std::runtime_error(errMsg.str());
   }
 
   return exitCode;
@@ -1096,8 +1068,13 @@ XclBinUtilities::exec(const boost::filesystem::path &cmd,
   std::string result;
   std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmdLine.c_str(), "r"), pclose);
   if (!pipe) {
+    auto errMsg = boost::format("Error: Shell command failed\n"
+                                "       Cmd: %s %s\n")
+                                % cmd.string() % boost::algorithm::join(args, " ");
+                                      
     if (bThrow) 
-      throw std::runtime_error("popen() failed!");
+      throw std::runtime_error(errMsg.str());
+
     return 1;
   }
 

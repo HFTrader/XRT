@@ -1,10 +1,10 @@
-import subprocess
-import os
-import argparse
 from argparse import RawDescriptionHelpFormatter
+import argparse
+import binascii
 import filecmp
 import json
-import binascii
+import os
+import subprocess
 
 # Start of our unit test
 # -- main() -------------------------------------------------------------------
@@ -145,7 +145,8 @@ def main():
                      "--dump-section", "CONNECTIVITY:JSON:" + outputPSKConnectivity,
                      "--dump-section", "MEM_TOPOLOGY:JSON:" + outputPSKMemTopology,
                      "--output", outputOnlyPSKernelXclbin, 
-                     "--force"]
+                     "--force"
+                     ]
 
   execCmd(step, cmd)
 
